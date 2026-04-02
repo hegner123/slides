@@ -1,0 +1,29 @@
+# Binary
+slides
+*.exe
+*.test
+*.out
+
+# Database
+slides.db
+
+# Coverage
+coverage.out
+coverage.html
+
+# Debug
+debug.log
+
+# Deck build artifacts
+*/node_modules/
+*/dist/
+*/assets/
+*.tsbuildinfo
+
+# macOS
+.DS_Store
+._*
+.Spotlight-V100
+.Trashes
+__MACOSX
+.fseventsd

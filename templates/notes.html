@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Speaker Notes - {{.Slug}}</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.ico">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        :root {
+            color-scheme: dark;
+        }
+
+        body {
+            background: #0a0e1a;
+            color: #e0e0e0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+            font-size: 18px;
+            padding: 40px 60px;
+            min-height: 100vh;
+        }
+
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 32px;
+            padding-bottom: 16px;
+            border-bottom: 2px solid #2a2a4a;
+        }
+
+        .header h1 {
+            font-size: 1.2rem;
+            font-weight: 600;
+            color: #8899aa;
+        }
+
+        .slide-indicator {
+            font-size: 1rem;
+            color: #00d4aa;
+            font-weight: 700;
+        }
+
+        .notes-content {
+            max-width: 800px;
+            line-height: 1.8;
+        }
+
+        .notes-content h1, .notes-content h2, .notes-content h3 {
+            color: #e91e9c;
+            margin-top: 24px;
+            margin-bottom: 8px;
+        }
+
+        .notes-content h1 { font-size: 1.4rem; }
+        .notes-content h2 { font-size: 1.2rem; }
+        .notes-content h3 { font-size: 1rem; }
+
+        .notes-content p {
+            margin-bottom: 12px;
+        }
+
+        .notes-content ul, .notes-content ol {
+            margin-bottom: 12px;
+            padding-left: 24px;
+        }
+
+        .notes-content li {
+            margin-bottom: 6px;
+        }
+
+        .notes-content code {
+            background: #1a1a3a;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 0.9em;
+            font-family: 'SF Mono', 'Fira Code', monospace;
+        }
+
+        .notes-content strong {
+            color: #00d4aa;
+        }
+
+        .notes-content em {
+            color: #8899aa;
+        }
+
+        .empty-note {
+            color: #445566;
+            font-style: italic;
+            padding: 40px 0;
+        }
+
+        .nav-hint {
+            position: fixed;
+            bottom: 20px;
+            right: 40px;
+            font-size: 0.75rem;
+            color: #445566;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Speaker Notes - {{.Slug}}</h1>
+        <div class="slide-indicator" id="slide-num">Slide 1</div>
+    </div>
+    <div class="notes-content" id="notes-content">
+        <div class="empty-note">Listening for slide changes...</div>
+    </div>
+    <div class="nav-hint">Arrow keys to navigate / syncs with presentation window</div>
+
+    <script>
+        const slug = "{{.Slug}}";
+        const noteFiles = [{{range .Files}}"{{.}}",{{end}}];
+        const notesCache = {};
+        let currentSlide = 1;
+
+        // Simple markdown to HTML (headings, bold, italic, code, lists)
+        function renderMarkdown(md) {
+            let html = md
+                .replace(/^### (.+)$/gm, '<h3>$1</h3>')
+                .replace(/^## (.+)$/gm, '<h2>$1</h2>')
+                .replace(/^# (.+)$/gm, '<h1>$1</h1>')
+                .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+                .replace(/\*(.+?)\*/g, '<em>$1</em>')
+                .replace(/`([^`]+)`/g, '<code>$1</code>')
+                .replace(/^- (.+)$/gm, '<li>$1</li>');
+
+            // Wrap consecutive <li> in <ul>
+            html = html.replace(/((?:<li>.*<\/li>\n?)+)/g, '<ul>$1</ul>');
+
+            // Wrap remaining lines in <p>
+            html = html.split('\n').map(line => {
+                line = line.trim();
+                if (!line) return '';
+                if (line.startsWith('<h') || line.startsWith('<ul') || line.startsWith('<li')) return line;
+                return '<p>' + line + '</p>';
+            }).join('\n');
+
+            return html;
+        }
+
+        async function loadNote(num) {
+            const filename = num + '.md';
+            if (noteFiles.indexOf(filename) === -1) {
+                return null;
+            }
+            if (notesCache[num]) return notesCache[num];
+
+            const resp = await fetch('/notes/' + slug + '/' + filename);
+            if (!resp.ok) return null;
+            const text = await resp.text();
+            notesCache[num] = text;
+            return text;
+        }
+
+        async function showNote(num) {
+            currentSlide = num;
+            document.getElementById('slide-num').textContent = 'Slide ' + num;
+            const content = document.getElementById('notes-content');
+            const md = await loadNote(num);
+            if (md) {
+                content.innerHTML = renderMarkdown(md);
+            } else {
+                content.innerHTML = '<div class="empty-note">No notes for slide ' + num + '</div>';
+            }
+        }
+
+        // Bidirectional sync via BroadcastChannel
+        let channel = null;
+        if (typeof BroadcastChannel !== 'undefined') {
+            channel = new BroadcastChannel('slides-sync');
+            channel.addEventListener('message', function(e) {
+                if (e.data && e.data.slide && e.data.source === 'deck') {
+                    showNote(e.data.slide);
+                }
+            });
+        }
+
+        function broadcastFromNotes(num) {
+            if (channel) {
+                channel.postMessage({ slide: num, source: 'notes' });
+            }
+            localStorage.setItem('slides-current-slide', String(num));
+        }
+
+        // Keyboard navigation (sends to deck)
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'ArrowRight' || e.key === ' ') {
+                e.preventDefault();
+                var next = currentSlide + 1;
+                showNote(next);
+                broadcastFromNotes(next);
+            } else if (e.key === 'ArrowLeft') {
+                e.preventDefault();
+                if (currentSlide > 1) {
+                    var prev = currentSlide - 1;
+                    showNote(prev);
+                    broadcastFromNotes(prev);
+                }
+            }
+        });
+
+        // Fallback: storage events for cross-tab sync
+        window.addEventListener('storage', function(e) {
+            if (e.key === 'slides-current-slide') {
+                var num = parseInt(e.newValue, 10);
+                if (num) showNote(num);
+            }
+        });
+
+        // Initial load
+        showNote(1);
+    </script>
+</body>
+</html>
